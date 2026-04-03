@@ -55,10 +55,10 @@ describe('Spinner', () => {
     spinner.update('Working...');
     expect(writes).toHaveLength(1);
 
-    vi.advanceTimersByTime(1000);
+    vi.advanceTimersByTime(250);
     expect(writes).toHaveLength(2);
 
-    vi.advanceTimersByTime(1000);
+    vi.advanceTimersByTime(250);
     expect(writes).toHaveLength(3);
 
     spinner.stop();
@@ -122,10 +122,10 @@ describe('Spinner', () => {
     expect(writes).toHaveLength(countAfterStop);
 
     spinner.update('Phase 2');
-    vi.advanceTimersByTime(1000);
+    vi.advanceTimersByTime(250);
     spinner.stop();
 
-    // Should have: Phase 1 render + Phase 2 render + 1 timer redraw
+    // Should have: Phase 2 update render + 1 timer redraw
     expect(writes.length).toBe(countAfterStop + 2);
     expect(writes[writes.length - 1]).toContain('Phase 2');
   });
