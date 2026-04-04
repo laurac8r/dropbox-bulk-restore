@@ -12,10 +12,12 @@ const ENDPOINT_MAP = {
 };
 
 export class DropboxClient {
-  constructor({ sdk, sleepFn = defaultSleep, appKey } = {}) {
+  constructor({ sdk, sleepFn = defaultSleep, appKey, onTokenRefresh } = {}) {
     this.sdk = sdk;
     this.sleepFn = sleepFn;
     this.appKey = appKey;
+    this.onTokenRefresh = onTokenRefresh;
+    this._refreshed = false;
   }
 
   async call(endpoint, body) {
@@ -57,6 +59,11 @@ export class DropboxClient {
         }
 
         if (status === 401 && errorBody?.error_summary?.startsWith('expired_access_token')) {
+          if (this.onTokenRefresh && !this._refreshed) {
+            this._refreshed = true;
+            await this.onTokenRefresh();
+            continue;
+          }
           const url = `https://www.dropbox.com/developers/apps/info/${this.appKey}#settings:~:text=Generated%20access%20token`;
           throw new Error(
             `Your Dropbox access token has expired. Re-generate it here:\n${url}\nThen update your .env file with the new token.`

@@ -189,6 +189,64 @@ describe('DropboxClient', () => {
         expect(error.message).toContain('#settings:~:text=Generated%20access%20token');
     });
 
+    test('refreshes token and retries once on 401 expired_access_token', async () => {
+        const {sdk, calls} = mockSdk([
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+            {name: 'photo.jpg'},
+        ]);
+        const refreshCalls = [];
+        const onTokenRefresh = async () => {
+            refreshCalls.push(true);
+        };
+
+        const client = new DropboxClient({sdk, onTokenRefresh});
+        const result = await client.call('/2/files/restore', {path: '/pic.jpg', rev: 'abc'});
+
+        expect(result).toEqual({name: 'photo.jpg'});
+        expect(calls).toHaveLength(2);
+        expect(refreshCalls).toHaveLength(1);
+    });
+
+    test('throws on 401 when no onTokenRefresh provided (backward compat)', async () => {
+        const {sdk} = mockSdk([
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+        ]);
+
+        const client = new DropboxClient({sdk, appKey: 'test-key'});
+
+        await expect(
+            client.call('/2/files/list_folder', {path: '/pics'})
+        ).rejects.toThrow('expired');
+    });
+
+    test('throws on second 401 after refresh (prevents infinite loop)', async () => {
+        const {sdk} = mockSdk([
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+        ]);
+
+        const client = new DropboxClient({
+            sdk,
+            onTokenRefresh: async () => {},
+        });
+
+        await expect(
+            client.call('/2/files/restore', {path: '/pic.jpg', rev: 'abc'})
+        ).rejects.toThrow('expired');
+    });
+
     test('throws on unknown endpoint', async () => {
         const {sdk} = mockSdk([]);
         const client = new DropboxClient({sdk});
