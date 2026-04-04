@@ -34,9 +34,22 @@ export async function run(options) {
     let api = apiFn;
     if (!api) {
         const {Dropbox} = await import('dropbox');
+        const {refreshToken, loadTokens, saveTokens} = await import('./auth.js');
+        const sdk = new Dropbox({accessToken: token});
+        const tokenDir = progressDir || '.';
         const client = new DropboxClient({
-            sdk: new Dropbox({accessToken: token}),
+            sdk,
             appKey,
+            onTokenRefresh: async () => {
+                const cached = loadTokens(tokenDir);
+                if (!cached?.refresh_token) throw new Error('No refresh token available');
+                const refreshed = await refreshToken({
+                    refreshTokenValue: cached.refresh_token,
+                    appKey,
+                });
+                saveTokens(tokenDir, refreshed);
+                sdk.setAccessToken(refreshed.access_token);
+            },
         });
         api = (endpoint, body) => client.call(endpoint, body);
     }
@@ -250,8 +263,13 @@ Options:
   --help, -h      Show this help message
 
 Environment:
-  DROPBOX_ACCESS_TOKEN   Required. Set in .env or export directly.
+  DROPBOX_APP_KEY        Required. Your Dropbox app key from the App Console.
+  DROPBOX_ACCESS_TOKEN   Optional. If set, skips OAuth and uses this token directly.
                          Generate at https://www.dropbox.com/developers/apps
+
+Authentication:
+  On first run (without DROPBOX_ACCESS_TOKEN), opens a browser for OAuth2
+  authorization. Tokens are cached in .tokens.json and refreshed automatically.
 
 Confirmation prompts:
   y   Restore files in this directory only
@@ -284,17 +302,19 @@ Resume:
     const {config} = await import('dotenv');
     config();
 
-    const token = process.env.DROPBOX_ACCESS_TOKEN;
-    if (!token) {
-        console.error('Error: DROPBOX_ACCESS_TOKEN not set. Create a .env file.');
-        process.exit(1);
-    }
-
     const appKey = process.env.DROPBOX_APP_KEY;
     if (!appKey) {
         console.error('Error: DROPBOX_APP_KEY not set. Add it to your .env file.');
         process.exit(1);
     }
+
+    const {getToken} = await import('./auth.js');
+    const cwd = new URL('.', import.meta.url).pathname;
+    const token = await getToken({
+        dir: cwd,
+        envToken: process.env.DROPBOX_ACCESS_TOKEN,
+        appKey,
+    });
 
     const readline = await import('readline');
     const rl = readline.createInterface({input: process.stdin, output: process.stdout});
@@ -308,8 +328,6 @@ Resume:
             );
         });
     };
-
-    const cwd = new URL('.', import.meta.url).pathname;
 
     try {
         await run({
