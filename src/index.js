@@ -4,7 +4,7 @@ import {discoverDeletedPage} from './discover.js';
 import {resolveRevisions} from './resolve.js';
 import {restoreFiles} from './restore.js';
 import {ProgressTracker} from './progress.js';
-import {dropboxFetch} from './api.js';
+import {DropboxClient} from './client.js';
 import {Spinner} from './spinner.js';
 
 export async function run(options) {
@@ -31,9 +31,15 @@ export async function run(options) {
     const info = (...args) => level <= LOG_LEVELS.INFO && logFn(...args);
     const warn = (...args) => level <= LOG_LEVELS.WARNING && logFn(...args);
 
-    const api = apiFn || ((endpoint, body) =>
-            dropboxFetch(endpoint, body, {token, appKey})
-    );
+    let api = apiFn;
+    if (!api) {
+        const {Dropbox} = await import('dropbox');
+        const client = new DropboxClient({
+            sdk: new Dropbox({accessToken: token}),
+            appKey,
+        });
+        api = (endpoint, body) => client.call(endpoint, body);
+    }
 
     // Load progress tracker if persistence is enabled
     let tracker = null;
