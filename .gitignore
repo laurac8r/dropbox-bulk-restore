@@ -4,3 +4,4 @@ progress.json
 errors.json
 .tokens.json
 .worktrees/
+.checkpoints/
