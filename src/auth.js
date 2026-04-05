@@ -16,7 +16,7 @@ export function loadTokens(dir) {
 }
 
 export function saveTokens(dir, tokens) {
-    writeFileSync(join(dir, TOKEN_FILE), JSON.stringify(tokens, null, 2) + '\n');
+    writeFileSync(join(dir, TOKEN_FILE), JSON.stringify(tokens, null, 2) + '\n', {mode: 0o600});
 }
 
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000; // 5 minutes
@@ -27,7 +27,7 @@ export function isTokenValid(tokens) {
 }
 
 export function generatePKCE() {
-    const verifier = randomBytes(64)
+    const verifier = randomBytes(96)
         .toString('base64url')
         .slice(0, 128);
     const challenge = createHash('sha256')
@@ -40,12 +40,15 @@ const CALLBACK_PORT = 8019;
 
 export function runPKCEFlow({appKey, openFn, fetchFn = fetch, port = CALLBACK_PORT}) {
     const {verifier, challenge} = generatePKCE();
+    const state = randomBytes(32).toString('base64url');
 
     return new Promise((resolve, reject) => {
+        let handled = false;
         let redirectUri;
+        let serverPort;
 
         const server = createServer(async (req, res) => {
-            const url = new URL(req.url, `http://localhost:${server.address().port}`);
+            const url = new URL(req.url, `http://localhost:${serverPort}`);
 
             if (url.pathname !== '/callback') {
                 res.writeHead(404);
@@ -53,8 +56,24 @@ export function runPKCEFlow({appKey, openFn, fetchFn = fetch, port = CALLBACK_PO
                 return;
             }
 
+            if (handled) {
+                res.writeHead(409, {'Content-Type': 'text/plain'});
+                res.end('Callback already processed');
+                return;
+            }
+            handled = true;
+
             const code = url.searchParams.get('code');
             const error = url.searchParams.get('error');
+            const receivedState = url.searchParams.get('state');
+
+            if (receivedState !== state) {
+                res.writeHead(400, {'Content-Type': 'text/plain'});
+                res.end('State mismatch');
+                server.close();
+                reject(new Error('OAuth state mismatch — possible CSRF attack'));
+                return;
+            }
 
             if (error || !code) {
                 res.writeHead(200, {'Content-Type': 'text/html'});
@@ -100,7 +119,8 @@ export function runPKCEFlow({appKey, openFn, fetchFn = fetch, port = CALLBACK_PO
         server.on('error', reject);
 
         server.listen(port, () => {
-            redirectUri = `http://localhost:${server.address().port}/callback`;
+            serverPort = server.address().port;
+            redirectUri = `http://localhost:${serverPort}/callback`;
 
             const authUrl = new URL('https://www.dropbox.com/oauth2/authorize');
             authUrl.searchParams.set('client_id', appKey);
@@ -109,14 +129,33 @@ export function runPKCEFlow({appKey, openFn, fetchFn = fetch, port = CALLBACK_PO
             authUrl.searchParams.set('code_challenge_method', 'S256');
             authUrl.searchParams.set('token_access_type', 'offline');
             authUrl.searchParams.set('redirect_uri', redirectUri);
+            authUrl.searchParams.set('state', state);
 
             openFn(authUrl.toString());
         });
     });
 }
 
-function openBrowser(url) {
-    execFileSync('open', [url]);
+export function openBrowser(url, {
+    platform = process.platform,
+    execFn = execFileSync,
+    logFn = console.log,
+} = {}) {
+    try {
+        if (platform === 'darwin') {
+            execFn('open', [url]);
+        } else if (platform === 'win32') {
+            // `start` is a cmd builtin, must be invoked via cmd /c.
+            // The empty string after /c is the window title (required
+            // because `start` treats the first quoted arg as the title).
+            execFn('cmd', ['/c', 'start', '', url]);
+        } else {
+            execFn('xdg-open', [url]);
+        }
+    } catch (err) {
+        logFn(`Could not open browser automatically (${err?.message || err}).`);
+        logFn(`Open this URL manually:\n  ${url}`);
+    }
 }
 
 export async function getToken({
@@ -137,16 +176,31 @@ export async function getToken({
 
     // Strategy 3: Refresh expired token
     if (cached?.refresh_token) {
+        let refreshed;
         try {
-            const refreshed = await refreshToken({
+            refreshed = await refreshToken({
                 refreshTokenValue: cached.refresh_token,
                 appKey,
                 fetchFn,
             });
-            saveTokens(dir, refreshed);
+        } catch (err) {
+            // Only permanent auth failures (400/401) fall through to PKCE.
+            // Transient errors (network, DNS, 5xx) propagate so callers can retry.
+            const msg = String(err?.message || err);
+            if (msg.includes('400') || msg.includes('401')) {
+                logFn(`Token refresh rejected (${msg}); starting browser authorization...`);
+            } else {
+                throw err;
+            }
+        }
+
+        if (refreshed) {
+            try {
+                saveTokens(dir, refreshed);
+            } catch (err) {
+                logFn(`Warning: failed to save refreshed token (${err?.message || err}); continuing with in-memory token.`);
+            }
             return refreshed.access_token;
-        } catch {
-            // Refresh failed (revoked app) — fall through to PKCE
         }
     }
 

@@ -1,8 +1,8 @@
 import {beforeEach, describe, expect, test} from 'vitest';
-import {mkdtempSync, writeFileSync} from 'fs';
+import {mkdtempSync, statSync, writeFileSync} from 'fs';
 import {join} from 'path';
 import {tmpdir} from 'os';
-import {generatePKCE, getToken, isTokenValid, loadTokens, refreshToken, runPKCEFlow, saveTokens} from '../src/auth.js';
+import {generatePKCE, getToken, isTokenValid, loadTokens, openBrowser, refreshToken, runPKCEFlow, saveTokens} from '../src/auth.js';
 
 describe('token storage', () => {
     let dir;
@@ -24,6 +24,14 @@ describe('token storage', () => {
         saveTokens(dir, tokens);
         const loaded = loadTokens(dir);
         expect(loaded).toEqual(tokens);
+    });
+
+    test('saveTokens writes file with 0o600 permissions (owner-only)', () => {
+        const tokens = {access_token: 'sl.test', refresh_token: 'r', expires_at: 'x'};
+        saveTokens(dir, tokens);
+        const stat = statSync(join(dir, '.tokens.json'));
+        // Check mode: lower 9 bits should equal 0o600
+        expect(stat.mode & 0o777).toBe(0o600);
     });
 
     test('loadTokens returns null on malformed JSON', () => {
@@ -73,6 +81,11 @@ describe('generatePKCE', () => {
         expect(verifier.length).toBeGreaterThanOrEqual(43);
         expect(verifier.length).toBeLessThanOrEqual(128);
         expect(verifier).toMatch(/^[A-Za-z0-9\-._~]+$/);
+    });
+
+    test('generates verifier of exactly 128 characters', () => {
+        const {verifier} = generatePKCE();
+        expect(verifier.length).toBe(128);
     });
 
     test('generates base64url-encoded challenge from verifier', () => {
@@ -181,7 +194,8 @@ describe('runPKCEFlow', () => {
 
         // Simulate OAuth callback
         const redirectUri = authUrl.searchParams.get('redirect_uri');
-        await fetch(`${redirectUri}?code=auth-code-123`);
+        const state = authUrl.searchParams.get('state');
+        await fetch(`${redirectUri}?code=auth-code-123&state=${encodeURIComponent(state)}`);
 
         const tokens = await flowPromise;
         expect(tokens.access_token).toBe('new-access');
@@ -190,6 +204,56 @@ describe('runPKCEFlow', () => {
         expect(capturedVerifier).toBeDefined();
         expect(capturedVerifier.length).toBeGreaterThanOrEqual(43);
         expect(capturedRedirectUri).toBe(redirectUri);
+    });
+
+    test('includes state parameter in auth URL and validates on callback', async () => {
+        const openedUrls = [];
+        const mockOpen = (url) => { openedUrls.push(url); };
+        const mockFetch = async () => ({
+            ok: true,
+            json: async () => ({access_token: 'a', refresh_token: 'r', expires_in: 14400}),
+        });
+
+        const flowPromise = runPKCEFlow({
+            appKey: 'test-key',
+            openFn: mockOpen,
+            fetchFn: mockFetch,
+            port: 0,
+        });
+
+        await new Promise((r) => setTimeout(r, 100));
+
+        const authUrl = new URL(openedUrls[0]);
+        const state = authUrl.searchParams.get('state');
+        expect(state).toBeDefined();
+        expect(state.length).toBeGreaterThanOrEqual(32);
+
+        const redirectUri = authUrl.searchParams.get('redirect_uri');
+        await fetch(`${redirectUri}?code=abc&state=${encodeURIComponent(state)}`);
+
+        const tokens = await flowPromise;
+        expect(tokens.access_token).toBe('a');
+    });
+
+    test('rejects callback with mismatched state parameter', async () => {
+        const openedUrls = [];
+        const mockOpen = (url) => { openedUrls.push(url); };
+        const mockFetch = async () => ({ok: true, json: async () => ({})});
+
+        const flowPromise = runPKCEFlow({
+            appKey: 'test-key',
+            openFn: mockOpen,
+            fetchFn: mockFetch,
+            port: 0,
+        });
+        flowPromise.catch(() => {});
+
+        await new Promise((r) => setTimeout(r, 100));
+
+        const redirectUri = new URL(openedUrls[0]).searchParams.get('redirect_uri');
+        await fetch(`${redirectUri}?code=abc&state=wrong-state`);
+
+        await expect(flowPromise).rejects.toThrow(/state/i);
     });
 
     test('rejects when callback receives error param', async () => {
@@ -211,8 +275,10 @@ describe('runPKCEFlow', () => {
 
         await new Promise((r) => setTimeout(r, 100));
 
-        const redirectUri = new URL(openedUrls[0]).searchParams.get('redirect_uri');
-        await fetch(`${redirectUri}?error=access_denied`);
+        const authUrl = new URL(openedUrls[0]);
+        const redirectUri = authUrl.searchParams.get('redirect_uri');
+        const state = authUrl.searchParams.get('state');
+        await fetch(`${redirectUri}?error=access_denied&state=${encodeURIComponent(state)}`);
 
         await expect(flowPromise).rejects.toThrow('OAuth authorization failed: access_denied');
     });
@@ -235,8 +301,10 @@ describe('runPKCEFlow', () => {
 
         await new Promise((r) => setTimeout(r, 100));
 
-        const redirectUri = new URL(openedUrls[0]).searchParams.get('redirect_uri');
-        await fetch(redirectUri);
+        const authUrl = new URL(openedUrls[0]);
+        const redirectUri = authUrl.searchParams.get('redirect_uri');
+        const state = authUrl.searchParams.get('state');
+        await fetch(`${redirectUri}?state=${encodeURIComponent(state)}`);
 
         await expect(flowPromise).rejects.toThrow('OAuth authorization failed: no code received');
     });
@@ -263,10 +331,51 @@ describe('runPKCEFlow', () => {
 
         await new Promise((r) => setTimeout(r, 100));
 
-        const redirectUri = new URL(openedUrls[0]).searchParams.get('redirect_uri');
-        await fetch(`${redirectUri}?code=some-code`);
+        const authUrl = new URL(openedUrls[0]);
+        const redirectUri = authUrl.searchParams.get('redirect_uri');
+        const state = authUrl.searchParams.get('state');
+        await fetch(`${redirectUri}?code=some-code&state=${encodeURIComponent(state)}`);
 
         await expect(flowPromise).rejects.toThrow('Token exchange failed (400)');
+    });
+
+    test('handled flag prevents double token exchange within single flow', async () => {
+        const openedUrls = [];
+        const mockOpen = (url) => { openedUrls.push(url); };
+        let fetchCount = 0;
+        const mockFetch = async () => {
+            fetchCount++;
+            // Delay to give the second request a chance to enter the handler
+            await new Promise((r) => setTimeout(r, 50));
+            return {
+                ok: true,
+                json: async () => ({access_token: 'a', refresh_token: 'r', expires_in: 14400}),
+            };
+        };
+
+        const flowPromise = runPKCEFlow({
+            appKey: 'test-key',
+            openFn: mockOpen,
+            fetchFn: mockFetch,
+            port: 0,
+        });
+
+        await new Promise((r) => setTimeout(r, 100));
+
+        const authUrl = new URL(openedUrls[0]);
+        const redirectUri = authUrl.searchParams.get('redirect_uri');
+        const state = authUrl.searchParams.get('state');
+
+        // Fire two callbacks back-to-back without awaiting the first
+        const r1 = fetch(`${redirectUri}?code=c1&state=${encodeURIComponent(state)}`);
+        const r2 = fetch(`${redirectUri}?code=c2&state=${encodeURIComponent(state)}`).catch(() => null);
+
+        await r1;
+        const res2 = await r2;
+
+        await flowPromise;
+        expect(fetchCount).toBe(1);
+        if (res2) expect(res2.status).toBe(409);
     });
 });
 
@@ -319,9 +428,11 @@ describe('getToken', () => {
 
     test('runs PKCE flow when no tokens exist', async () => {
         let callbackUrl;
+        let pkceState;
         const mockOpen = (url) => {
             const authUrl = new URL(url);
             callbackUrl = authUrl.searchParams.get('redirect_uri');
+            pkceState = authUrl.searchParams.get('state');
         };
         const mockFetch = async () => ({
             ok: true,
@@ -342,7 +453,7 @@ describe('getToken', () => {
 
         // Wait for server to start, then simulate callback
         await new Promise((r) => setTimeout(r, 150));
-        await fetch(`${callbackUrl}?code=test-code`);
+        await fetch(`${callbackUrl}?code=test-code&state=${encodeURIComponent(pkceState)}`);
 
         const result = await tokenPromise;
         expect(result).toBe('pkce-access');
@@ -357,10 +468,12 @@ describe('getToken', () => {
         writeFileSync(join(dir, '.tokens.json'), JSON.stringify(tokens));
 
         let callbackUrl;
+        let pkceState;
         let fetchCallCount = 0;
         const mockOpen = (url) => {
             const authUrl = new URL(url);
             callbackUrl = authUrl.searchParams.get('redirect_uri');
+            pkceState = authUrl.searchParams.get('state');
         };
         const mockFetch = async () => {
             fetchCallCount++;
@@ -388,9 +501,137 @@ describe('getToken', () => {
         });
 
         await new Promise((r) => setTimeout(r, 150));
-        await fetch(`${callbackUrl}?code=fallback-code`);
+        await fetch(`${callbackUrl}?code=fallback-code&state=${encodeURIComponent(pkceState)}`);
 
         const result = await tokenPromise;
         expect(result).toBe('pkce-fallback');
+    });
+
+    test('propagates transient network error during refresh (does not fall through)', async () => {
+        const tokens = {
+            access_token: 'expired',
+            refresh_token: 'valid',
+            expires_at: new Date(Date.now() - 1000).toISOString(),
+        };
+        writeFileSync(join(dir, '.tokens.json'), JSON.stringify(tokens));
+
+        const mockFetch = async () => { throw new Error('ECONNRESET'); };
+
+        await expect(
+            getToken({dir, appKey: 'key', fetchFn: mockFetch, openFn: () => {}, port: 0})
+        ).rejects.toThrow('ECONNRESET');
+    });
+
+    test('logs when refresh fails with 400/401 and falls through to PKCE', async () => {
+        const tokens = {
+            access_token: 'expired',
+            refresh_token: 'revoked',
+            expires_at: new Date(Date.now() - 1000).toISOString(),
+        };
+        writeFileSync(join(dir, '.tokens.json'), JSON.stringify(tokens));
+
+        const logs = [];
+        let callbackUrl;
+        let pkceState;
+        const mockOpen = (url) => {
+            const authUrl = new URL(url);
+            callbackUrl = authUrl.searchParams.get('redirect_uri');
+            pkceState = authUrl.searchParams.get('state');
+        };
+        let fetchCalls = 0;
+        const mockFetch = async () => {
+            fetchCalls++;
+            if (fetchCalls === 1) return {ok: false, status: 400, text: async () => 'invalid_grant'};
+            return {
+                ok: true,
+                json: async () => ({access_token: 'pkce-a', refresh_token: 'r', expires_in: 14400}),
+            };
+        };
+
+        const tokenPromise = getToken({
+            dir, appKey: 'key',
+            fetchFn: mockFetch, openFn: mockOpen, port: 0,
+            logFn: (msg) => logs.push(msg),
+        });
+
+        await new Promise((r) => setTimeout(r, 150));
+        await fetch(`${callbackUrl}?code=c&state=${encodeURIComponent(pkceState)}`);
+
+        const result = await tokenPromise;
+        expect(result).toBe('pkce-a');
+        expect(logs.some((m) => /refresh/i.test(m))).toBe(true);
+    });
+
+    test('returns refreshed token even if saveTokens fails, logs warning', async () => {
+        const tokens = {
+            access_token: 'expired',
+            refresh_token: 'valid',
+            expires_at: new Date(Date.now() - 1000).toISOString(),
+        };
+        writeFileSync(join(dir, '.tokens.json'), JSON.stringify(tokens));
+        // Make file/dir un-writable so saveTokens throws
+        const {chmodSync} = await import('fs');
+        chmodSync(join(dir, '.tokens.json'), 0o400);
+        chmodSync(dir, 0o500);
+
+        const logs = [];
+        const mockFetch = async () => ({
+            ok: true,
+            json: async () => ({access_token: 'refreshed-a', expires_in: 14400}),
+        });
+
+        try {
+            const result = await getToken({
+                dir, appKey: 'key', fetchFn: mockFetch,
+                logFn: (msg) => logs.push(msg),
+            });
+            expect(result).toBe('refreshed-a');
+            expect(logs.some((m) => /save|warn/i.test(m))).toBe(true);
+        } finally {
+            chmodSync(dir, 0o700);
+        }
+    });
+});
+
+describe('openBrowser', () => {
+    test('uses "open" on darwin', () => {
+        const calls = [];
+        openBrowser('https://example.com', {
+            platform: 'darwin',
+            execFn: (cmd, args) => calls.push([cmd, args]),
+            logFn: () => {},
+        });
+        expect(calls).toEqual([['open', ['https://example.com']]]);
+    });
+
+    test('uses "cmd /c start" on win32', () => {
+        const calls = [];
+        openBrowser('https://example.com', {
+            platform: 'win32',
+            execFn: (cmd, args) => calls.push([cmd, args]),
+            logFn: () => {},
+        });
+        expect(calls).toEqual([['cmd', ['/c', 'start', '', 'https://example.com']]]);
+    });
+
+    test('uses "xdg-open" on linux', () => {
+        const calls = [];
+        openBrowser('https://example.com', {
+            platform: 'linux',
+            execFn: (cmd, args) => calls.push([cmd, args]),
+            logFn: () => {},
+        });
+        expect(calls).toEqual([['xdg-open', ['https://example.com']]]);
+    });
+
+    test('falls back to printing URL when exec throws', () => {
+        const logs = [];
+        openBrowser('https://example.com', {
+            platform: 'linux',
+            execFn: () => { throw new Error('ENOENT'); },
+            logFn: (msg) => logs.push(msg),
+        });
+        expect(logs.some((m) => m.includes('https://example.com'))).toBe(true);
+        expect(logs.some((m) => /manually|could not open/i.test(m))).toBe(true);
     });
 });
