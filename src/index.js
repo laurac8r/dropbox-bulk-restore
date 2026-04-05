@@ -48,7 +48,7 @@ export async function run(options) {
                     appKey,
                 });
                 saveTokens(tokenDir, refreshed);
-                sdk.setAccessToken(refreshed.access_token);
+                sdk.auth.setAccessToken(refreshed.access_token);
             },
         });
         api = (endpoint, body) => client.call(endpoint, body);
@@ -309,7 +309,7 @@ Resume:
     }
 
     const {getToken} = await import('./auth.js');
-    const cwd = new URL('.', import.meta.url).pathname;
+    const cwd = process.cwd();
     const token = await getToken({
         dir: cwd,
         envToken: process.env.DROPBOX_ACCESS_TOKEN,
