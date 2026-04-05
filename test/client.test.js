@@ -247,6 +247,59 @@ describe('DropboxClient', () => {
         ).rejects.toThrow('expired');
     });
 
+    test('second call() on same instance can trigger refresh again', async () => {
+        const {sdk, calls} = mockSdk([
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+            {success: 'first'},
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+            {success: 'second'},
+        ]);
+        let refreshCount = 0;
+        const client = new DropboxClient({
+            sdk,
+            onTokenRefresh: async () => { refreshCount++; },
+        });
+
+        const r1 = await client.call('/2/files/list_folder', {path: '/a'});
+        const r2 = await client.call('/2/files/list_folder', {path: '/b'});
+
+        expect(r1).toEqual({success: 'first'});
+        expect(r2).toEqual({success: 'second'});
+        expect(refreshCount).toBe(2);
+        expect(calls).toHaveLength(4);
+    });
+
+    test('falls back to regeneration message when onTokenRefresh throws', async () => {
+        const {sdk} = mockSdk([
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+        ]);
+
+        const client = new DropboxClient({
+            sdk,
+            appKey: 'test-app-key',
+            onTokenRefresh: async () => {
+                throw new Error('No refresh token available');
+            },
+        });
+
+        const error = await client
+            .call('/2/files/list_folder', {path: '/pics'})
+            .catch((e) => e);
+
+        expect(error.message).toContain('expired');
+        expect(error.message).toContain('https://www.dropbox.com/developers/apps/info/test-app-key');
+        expect(error.message).not.toContain('No refresh token available');
+    });
+
     test('throws on unknown endpoint', async () => {
         const {sdk} = mockSdk([]);
         const client = new DropboxClient({sdk});

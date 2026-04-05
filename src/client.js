@@ -17,7 +17,6 @@ export class DropboxClient {
     this.sleepFn = sleepFn;
     this.appKey = appKey;
     this.onTokenRefresh = onTokenRefresh;
-    this._refreshed = false;
   }
 
   async call(endpoint, body) {
@@ -26,6 +25,7 @@ export class DropboxClient {
       throw new Error(`Unknown endpoint: ${endpoint}`);
     }
 
+    let refreshed = false;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         const response = await this.sdk[method](body);
@@ -59,10 +59,14 @@ export class DropboxClient {
         }
 
         if (status === 401 && errorBody?.error_summary?.startsWith('expired_access_token')) {
-          if (this.onTokenRefresh && !this._refreshed) {
-            this._refreshed = true;
-            await this.onTokenRefresh();
-            continue;
+          if (this.onTokenRefresh && !refreshed) {
+            refreshed = true;
+            try {
+              await this.onTokenRefresh();
+              continue;
+            } catch {
+              // Fall through to user-facing regeneration message below
+            }
           }
           const url = `https://www.dropbox.com/developers/apps/info/${this.appKey}#settings:~:text=Generated%20access%20token`;
           throw new Error(
