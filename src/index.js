@@ -49,9 +49,7 @@ export async function run(options) {
                     appKey,
                 });
                 saveTokens(tokenDir, refreshed);
-                if (sdk.auth) {
-                    sdk.auth.setAccessToken(refreshed.access_token);
-                }
+                sdk.auth.setAccessToken(refreshed.access_token);
             },
         });
         api = (endpoint, body) => client.call(endpoint, body);
@@ -292,15 +290,16 @@ Resume:
             process.exit(1);
         }
     }
-
+    
+    const defaultPath = '/AREAS/MEDIA/PICTURES';
     const pathFlag = args.indexOf('--path');
-    const targetPath = pathFlag !== -1 ? args[pathFlag + 1] : '/AREAS/MEDIA/PICTURES';
+    const targetPath = pathFlag !== -1 ? (args[pathFlag + 1] || defaultPath) : defaultPath;
     const limitFlag = args.indexOf('--limit');
     const limit = limitFlag !== -1 ? parseInt(args[limitFlag + 1], 10) : undefined;
     const dryRun = args.includes('--dry-run');
     const autoApprove = args.includes('--yes') || args.includes('-y');
     const logLevelFlag = args.indexOf('--log-level');
-    const logLevel = logLevelFlag !== -1 ? args[logLevelFlag + 1].toUpperCase() : 'INFO';
+    const logLevel = logLevelFlag !== -1 ? (args[logLevelFlag + 1] || 'INFO').toUpperCase() : 'INFO';
 
     const {config} = await import('dotenv');
     config();

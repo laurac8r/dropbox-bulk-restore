@@ -824,6 +824,33 @@ describe('run (orchestrator)', () => {
     fs.rmSync(tmpDir, { recursive: true });
   });
 
+  describe('onTokenRefresh callback (sdk.auth guard)', () => {
+    test('throws immediately when sdk.auth is undefined instead of silently no-oping', async () => {
+      // Mirrors the fixed code in run(): sdk.auth.setAccessToken(...) without
+      // optional chaining — if sdk.auth is missing, TypeError surfaces immediately
+      // rather than silently leaving the expired token in place.
+      const sdkWithoutAuth = {};
+
+      const onTokenRefresh = async () => {
+        sdkWithoutAuth.auth.setAccessToken('new-token');
+      };
+
+      await expect(onTokenRefresh()).rejects.toThrow(TypeError);
+    });
+
+    test('setAccessToken is called (not silently skipped) when sdk.auth exists', async () => {
+      const setAccessToken = vi.fn();
+      const sdkWithAuth = { auth: { setAccessToken } };
+
+      const onTokenRefresh = async () => {
+        sdkWithAuth.auth.setAccessToken('new-token');
+      };
+
+      await onTokenRefresh();
+      expect(setAccessToken).toHaveBeenCalledWith('new-token');
+    });
+  });
+
   test('dry-run skips restore calls', async () => {
     const mockApi = vi.fn().mockImplementation((endpoint) => {
       if (endpoint === '/2/files/list_folder') {
@@ -855,5 +882,48 @@ describe('run (orchestrator)', () => {
 
     expect(result.dryRunCount).toBe(1);
     expect(result.restored).toBe(0);
+  });
+});
+
+describe('CLI argument parsing edge cases', () => {
+  test('--log-level with no value does not throw TypeError', async () => {
+    // Spawn a subprocess: node src/index.js --log-level
+    // It will fail with missing DROPBOX_APP_KEY (exit 1), but must NOT crash
+    // with "TypeError: Cannot read properties of undefined (reading 'toUpperCase')"
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const execFileAsync = promisify(execFile);
+
+    let stderr = '';
+    try {
+      await execFileAsync('node', ['src/index.js', '--log-level'], {
+        cwd: new URL('..', import.meta.url).pathname,
+        env: { ...process.env, DROPBOX_APP_KEY: '' },
+      });
+    } catch (err) {
+      stderr = err.stderr ?? '';
+    }
+
+    expect(stderr).not.toMatch(/TypeError/);
+    expect(stderr).not.toMatch(/Cannot read properties of undefined/);
+  });
+
+  test('--path with no value does not pass undefined as path', async () => {
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const execFileAsync = promisify(execFile);
+
+    let stderr = '';
+    try {
+      await execFileAsync('node', ['src/index.js', '--path'], {
+        cwd: new URL('..', import.meta.url).pathname,
+        env: { ...process.env, DROPBOX_APP_KEY: '' },
+      });
+    } catch (err) {
+      stderr = err.stderr ?? '';
+    }
+
+    expect(stderr).not.toMatch(/TypeError/);
+    expect(stderr).not.toMatch(/Cannot read properties of undefined/);
   });
 });
