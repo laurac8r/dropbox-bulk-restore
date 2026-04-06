@@ -36,7 +36,8 @@ export async function run(options) {
         const {Dropbox} = await import('dropbox');
         const {refreshToken, loadTokens, saveTokens} = await import('./auth.js');
         const sdk = new Dropbox({accessToken: token});
-        const tokenDir = progressDir || '.';
+        const {resolve} = await import('path');
+        const tokenDir = resolve(progressDir || '.');
         const client = new DropboxClient({
             sdk,
             appKey,
@@ -48,7 +49,9 @@ export async function run(options) {
                     appKey,
                 });
                 saveTokens(tokenDir, refreshed);
-                sdk.auth.setAccessToken(refreshed.access_token);
+                if (sdk.auth) {
+                    sdk.auth.setAccessToken(refreshed.access_token);
+                }
             },
         });
         api = (endpoint, body) => client.call(endpoint, body);

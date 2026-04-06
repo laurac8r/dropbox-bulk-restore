@@ -1,4 +1,4 @@
-import {readFileSync, writeFileSync} from 'fs';
+import {readFileSync, writeFileSync, renameSync} from 'fs';
 import {join} from 'path';
 import {createHash, randomBytes} from 'crypto';
 import {createServer} from 'http';
@@ -16,7 +16,10 @@ export function loadTokens(dir) {
 }
 
 export function saveTokens(dir, tokens) {
-    writeFileSync(join(dir, TOKEN_FILE), JSON.stringify(tokens, null, 2) + '\n', {mode: 0o600});
+    const target = join(dir, TOKEN_FILE);
+    const tmp = `${target}.tmp`;
+    writeFileSync(tmp, JSON.stringify(tokens, null, 2) + '\n', {mode: 0o600});
+    renameSync(tmp, target);
 }
 
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000; // 5 minutes
@@ -37,8 +40,9 @@ export function generatePKCE() {
 }
 
 const CALLBACK_PORT = 8019;
+const PKCE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
-export function runPKCEFlow({appKey, openFn, fetchFn = fetch, port = CALLBACK_PORT}) {
+export function runPKCEFlow({appKey, openFn, fetchFn = fetch, port = CALLBACK_PORT, timeoutMs = PKCE_TIMEOUT_MS}) {
     const {verifier, challenge} = generatePKCE();
     const state = randomBytes(32).toString('base64url');
 
@@ -118,7 +122,7 @@ export function runPKCEFlow({appKey, openFn, fetchFn = fetch, port = CALLBACK_PO
 
         server.on('error', reject);
 
-        server.listen(port, () => {
+        server.listen(port, '127.0.0.1', () => {
             serverPort = server.address().port;
             redirectUri = `http://localhost:${serverPort}/callback`;
 
@@ -133,6 +137,17 @@ export function runPKCEFlow({appKey, openFn, fetchFn = fetch, port = CALLBACK_PO
 
             openFn(authUrl.toString());
         });
+
+        if (timeoutMs > 0) {
+            const timer = setTimeout(() => {
+                if (!handled) {
+                    handled = true;
+                    server.close();
+                    reject(new Error(`PKCE authorization timed out after ${timeoutMs / 1000}s — no callback received`));
+                }
+            }, timeoutMs);
+            server.on('close', () => clearTimeout(timer));
+        }
     });
 }
 

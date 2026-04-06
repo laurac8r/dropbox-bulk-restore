@@ -63,8 +63,10 @@ export class DropboxClient {
             refreshed = true;
             try {
               await this.onTokenRefresh();
+              attempt = -1; // will be incremented to 0 at loop top
               continue;
-            } catch {
+            } catch (refreshErr) {
+              console.error('Token refresh failed:', refreshErr?.message || refreshErr);
               // Fall through to user-facing regeneration message below
             }
           }
