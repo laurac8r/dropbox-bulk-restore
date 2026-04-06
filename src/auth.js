@@ -201,9 +201,8 @@ export async function getToken({
         } catch (err) {
             // Only permanent auth failures (400/401) fall through to PKCE.
             // Transient errors (network, DNS, 5xx) propagate so callers can retry.
-            const msg = String(err?.message || err);
-            if (msg.includes('400') || msg.includes('401')) {
-                logFn(`Token refresh rejected (${msg}); starting browser authorization...`);
+            if (err?.status === 400 || err?.status === 401) {
+                logFn(`Token refresh rejected (${err?.message || err}); starting browser authorization...`);
             } else {
                 throw err;
             }
@@ -238,7 +237,9 @@ export async function refreshToken({refreshTokenValue, appKey, fetchFn = fetch})
     });
 
     if (!response.ok) {
-        throw new Error(`Token refresh failed (${response.status}): ${await response.text()}`);
+        const err = new Error(`Token refresh failed (${response.status}): ${await response.text()}`);
+        err.status = response.status;
+        throw err;
     }
 
     const data = await response.json();

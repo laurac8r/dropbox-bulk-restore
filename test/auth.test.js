@@ -146,6 +146,23 @@ describe('refreshToken', () => {
             })
         ).rejects.toThrow('Token refresh failed (400)');
     });
+
+    test.each([400, 401, 500])('thrown error has .status = %i', async (status) => {
+        const mockFetch = async () => ({
+            ok: false,
+            status,
+            text: async () => 'error body',
+        });
+
+        const err = await refreshToken({
+            refreshTokenValue: 'bad-refresh',
+            appKey: 'test-app-key',
+            fetchFn: mockFetch,
+        }).catch((e) => e);
+
+        expect(err).toBeInstanceOf(Error);
+        expect(err.status).toBe(status);
+    });
 });
 
 describe('runPKCEFlow', () => {
@@ -505,6 +522,23 @@ describe('getToken', () => {
 
         const result = await tokenPromise;
         expect(result).toBe('pkce-fallback');
+    });
+
+    test('propagates error whose message incidentally contains "400" as substring (not a real HTTP 400)', async () => {
+        const tokens = {
+            access_token: 'expired',
+            refresh_token: 'valid',
+            expires_at: new Date(Date.now() - 1000).toISOString(),
+        };
+        writeFileSync(join(dir, '.tokens.json'), JSON.stringify(tokens));
+
+        const fakeErr = new Error('upstream returned 14001 results, not a real HTTP 400');
+        // No .status property — simulates a non-HTTP error whose message happens to contain "400"
+        const mockFetch = async () => { throw fakeErr; };
+
+        await expect(
+            getToken({dir, appKey: 'key', fetchFn: mockFetch, openFn: () => {}, port: 0})
+        ).rejects.toThrow('14001');
     });
 
     test('propagates transient network error during refresh (does not fall through)', async () => {
