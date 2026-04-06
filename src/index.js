@@ -291,7 +291,7 @@ Resume:
         }
     }
     
-    const defaultPath = ''/youmustspecify/'';
+    const defaultPath = '/youmustspecify/';
     const pathFlag = args.indexOf('--path');
     const targetPath = pathFlag !== -1 ? (args[pathFlag + 1] || defaultPath) : defaultPath;
     const limitFlag = args.indexOf('--limit');
