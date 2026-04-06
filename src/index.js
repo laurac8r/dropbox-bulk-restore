@@ -256,7 +256,7 @@ Usage:
   node src/index.js [options]
 
 Options:
-  --path <path>   Dropbox folder path to scan (default: /AREAS/MEDIA/PICTURES)
+  --path <path>   Dropbox folder path to scan (default: '/youmustspecify/')
   --limit <n>     Maximum number of files to restore (optional)
   --dry-run       Show what would be restored without making changes
   --yes, -y       Auto-approve all confirmation prompts (default: false)
@@ -291,7 +291,7 @@ Resume:
         }
     }
     
-    const defaultPath = '/AREAS/MEDIA/PICTURES';
+    const defaultPath = ''/youmustspecify/'';
     const pathFlag = args.indexOf('--path');
     const targetPath = pathFlag !== -1 ? (args[pathFlag + 1] || defaultPath) : defaultPath;
     const limitFlag = args.indexOf('--limit');
