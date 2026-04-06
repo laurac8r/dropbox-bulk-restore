@@ -1,4 +1,4 @@
-import {describe, expect, test} from 'vitest';
+import {describe, expect, test, vi} from 'vitest';
 import {DropboxClient} from '../src/client.js';
 
 function mockSdk(responses) {
@@ -187,6 +187,144 @@ describe('DropboxClient', () => {
         expect(error.message).toContain('expired');
         expect(error.message).toContain('https://www.dropbox.com/developers/apps/info/test-app-key');
         expect(error.message).toContain('#settings:~:text=Generated%20access%20token');
+    });
+
+    test('refreshes token and retries once on 401 expired_access_token', async () => {
+        const {sdk, calls} = mockSdk([
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+            {name: 'photo.jpg'},
+        ]);
+        const refreshCalls = [];
+        const onTokenRefresh = async () => {
+            refreshCalls.push(true);
+        };
+
+        const client = new DropboxClient({sdk, onTokenRefresh});
+        const result = await client.call('/2/files/restore', {path: '/pic.jpg', rev: 'abc'});
+
+        expect(result).toEqual({name: 'photo.jpg'});
+        expect(calls).toHaveLength(2);
+        expect(refreshCalls).toHaveLength(1);
+    });
+
+    test('throws on 401 when no onTokenRefresh provided (backward compat)', async () => {
+        const {sdk} = mockSdk([
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+        ]);
+
+        const client = new DropboxClient({sdk, appKey: 'test-key'});
+
+        await expect(
+            client.call('/2/files/list_folder', {path: '/pics'})
+        ).rejects.toThrow('expired');
+    });
+
+    test('throws on second 401 after refresh (prevents infinite loop)', async () => {
+        const {sdk} = mockSdk([
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+        ]);
+
+        const client = new DropboxClient({
+            sdk,
+            onTokenRefresh: async () => {},
+        });
+
+        await expect(
+            client.call('/2/files/restore', {path: '/pic.jpg', rev: 'abc'})
+        ).rejects.toThrow('expired');
+    });
+
+    test('second call() on same instance can trigger refresh again', async () => {
+        const {sdk, calls} = mockSdk([
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+            {success: 'first'},
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+            {success: 'second'},
+        ]);
+        let refreshCount = 0;
+        const client = new DropboxClient({
+            sdk,
+            onTokenRefresh: async () => { refreshCount++; },
+        });
+
+        const r1 = await client.call('/2/files/list_folder', {path: '/a'});
+        const r2 = await client.call('/2/files/list_folder', {path: '/b'});
+
+        expect(r1).toEqual({success: 'first'});
+        expect(r2).toEqual({success: 'second'});
+        expect(refreshCount).toBe(2);
+        expect(calls).toHaveLength(4);
+    });
+
+    test('falls back to regeneration message when onTokenRefresh throws', async () => {
+        const {sdk} = mockSdk([
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+        ]);
+
+        const logFn = vi.fn();
+        const client = new DropboxClient({
+            sdk,
+            appKey: 'test-app-key',
+            logFn,
+            onTokenRefresh: async () => {
+                throw new Error('No refresh token available');
+            },
+        });
+
+        const error = await client
+            .call('/2/files/list_folder', {path: '/pics'})
+            .catch((e) => e);
+
+        expect(error.message).toContain('expired');
+        expect(error.message).toContain('https://www.dropbox.com/developers/apps/info/test-app-key');
+        expect(error.message).not.toContain('No refresh token available');
+    });
+
+    test('calls injected logFn with refresh error when onTokenRefresh throws', async () => {
+        const {sdk} = mockSdk([
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+        ]);
+
+        const logFn = vi.fn();
+        const refreshError = new Error('No refresh token available');
+        const client = new DropboxClient({
+            sdk,
+            appKey: 'test-app-key',
+            logFn,
+            onTokenRefresh: async () => {
+                throw refreshError;
+            },
+        });
+
+        await client.call('/2/files/list_folder', {path: '/pics'}).catch(() => {});
+
+        expect(logFn).toHaveBeenCalledOnce();
+        expect(logFn).toHaveBeenCalledWith('Token refresh failed:', refreshError.message);
     });
 
     test('throws on unknown endpoint', async () => {

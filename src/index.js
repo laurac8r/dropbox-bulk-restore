@@ -34,9 +34,23 @@ export async function run(options) {
     let api = apiFn;
     if (!api) {
         const {Dropbox} = await import('dropbox');
+        const {refreshToken, loadTokens, saveTokens} = await import('./auth.js');
+        const sdk = new Dropbox({accessToken: token});
+        const {resolve} = await import('path');
+        const tokenDir = resolve(progressDir || '.');
         const client = new DropboxClient({
-            sdk: new Dropbox({accessToken: token}),
+            sdk,
             appKey,
+            onTokenRefresh: async () => {
+                const cached = loadTokens(tokenDir);
+                if (!cached?.refresh_token) throw new Error('No refresh token available');
+                const refreshed = await refreshToken({
+                    refreshTokenValue: cached.refresh_token,
+                    appKey,
+                });
+                saveTokens(tokenDir, refreshed);
+                sdk.auth.setAccessToken(refreshed.access_token);
+            },
         });
         api = (endpoint, body) => client.call(endpoint, body);
     }
@@ -242,7 +256,7 @@ Usage:
   node src/index.js [options]
 
 Options:
-  --path <path>   Dropbox folder path to scan (default: /AREAS/MEDIA/PICTURES)
+  --path <path>   Dropbox folder path to scan (default: '/youmustspecify/')
   --limit <n>     Maximum number of files to restore (optional)
   --dry-run       Show what would be restored without making changes
   --yes, -y       Auto-approve all confirmation prompts (default: false)
@@ -250,8 +264,13 @@ Options:
   --help, -h      Show this help message
 
 Environment:
-  DROPBOX_ACCESS_TOKEN   Required. Set in .env or export directly.
+  DROPBOX_APP_KEY        Required. Your Dropbox app key from the App Console.
+  DROPBOX_ACCESS_TOKEN   Optional. If set, skips OAuth and uses this token directly.
                          Generate at https://www.dropbox.com/developers/apps
+
+Authentication:
+  On first run (without DROPBOX_ACCESS_TOKEN), opens a browser for OAuth2
+  authorization. Tokens are cached in .tokens.json and refreshed automatically.
 
 Confirmation prompts:
   y   Restore files in this directory only
@@ -271,30 +290,33 @@ Resume:
             process.exit(1);
         }
     }
-
+    
+    const defaultPath = ''/youmustspecify/'';
     const pathFlag = args.indexOf('--path');
-    const targetPath = pathFlag !== -1 ? args[pathFlag + 1] : '/AREAS/MEDIA/PICTURES';
+    const targetPath = pathFlag !== -1 ? (args[pathFlag + 1] || defaultPath) : defaultPath;
     const limitFlag = args.indexOf('--limit');
     const limit = limitFlag !== -1 ? parseInt(args[limitFlag + 1], 10) : undefined;
     const dryRun = args.includes('--dry-run');
     const autoApprove = args.includes('--yes') || args.includes('-y');
     const logLevelFlag = args.indexOf('--log-level');
-    const logLevel = logLevelFlag !== -1 ? args[logLevelFlag + 1].toUpperCase() : 'INFO';
+    const logLevel = logLevelFlag !== -1 ? (args[logLevelFlag + 1] || 'INFO').toUpperCase() : 'INFO';
 
     const {config} = await import('dotenv');
     config();
-
-    const token = process.env.DROPBOX_ACCESS_TOKEN;
-    if (!token) {
-        console.error('Error: DROPBOX_ACCESS_TOKEN not set. Create a .env file.');
-        process.exit(1);
-    }
 
     const appKey = process.env.DROPBOX_APP_KEY;
     if (!appKey) {
         console.error('Error: DROPBOX_APP_KEY not set. Add it to your .env file.');
         process.exit(1);
     }
+
+    const {getToken} = await import('./auth.js');
+    const cwd = process.cwd();
+    const token = await getToken({
+        dir: cwd,
+        envToken: process.env.DROPBOX_ACCESS_TOKEN,
+        appKey,
+    });
 
     const readline = await import('readline');
     const rl = readline.createInterface({input: process.stdin, output: process.stdout});
@@ -308,8 +330,6 @@ Resume:
             );
         });
     };
-
-    const cwd = new URL('.', import.meta.url).pathname;
 
     try {
         await run({
