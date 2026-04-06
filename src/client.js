@@ -12,11 +12,12 @@ const ENDPOINT_MAP = {
 };
 
 export class DropboxClient {
-  constructor({ sdk, sleepFn = defaultSleep, appKey, onTokenRefresh } = {}) {
+  constructor({ sdk, sleepFn = defaultSleep, appKey, onTokenRefresh, logFn = console.error } = {}) {
     this.sdk = sdk;
     this.sleepFn = sleepFn;
     this.appKey = appKey;
     this.onTokenRefresh = onTokenRefresh;
+    this.logFn = logFn;
   }
 
   async call(endpoint, body) {
@@ -66,7 +67,7 @@ export class DropboxClient {
               attempt = -1; // will be incremented to 0 at loop top
               continue;
             } catch (refreshErr) {
-              console.error('Token refresh failed:', refreshErr?.message || refreshErr);
+              this.logFn('Token refresh failed:', refreshErr?.message || refreshErr);
               // Fall through to user-facing regeneration message below
             }
           }

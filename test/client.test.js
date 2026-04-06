@@ -1,4 +1,4 @@
-import {describe, expect, test} from 'vitest';
+import {describe, expect, test, vi} from 'vitest';
 import {DropboxClient} from '../src/client.js';
 
 function mockSdk(responses) {
@@ -283,9 +283,11 @@ describe('DropboxClient', () => {
             }),
         ]);
 
+        const logFn = vi.fn();
         const client = new DropboxClient({
             sdk,
             appKey: 'test-app-key',
+            logFn,
             onTokenRefresh: async () => {
                 throw new Error('No refresh token available');
             },
@@ -298,6 +300,31 @@ describe('DropboxClient', () => {
         expect(error.message).toContain('expired');
         expect(error.message).toContain('https://www.dropbox.com/developers/apps/info/test-app-key');
         expect(error.message).not.toContain('No refresh token available');
+    });
+
+    test('calls injected logFn with refresh error when onTokenRefresh throws', async () => {
+        const {sdk} = mockSdk([
+            sdkError(401, {
+                error: {'.tag': 'expired_access_token'},
+                error_summary: 'expired_access_token/',
+            }),
+        ]);
+
+        const logFn = vi.fn();
+        const refreshError = new Error('No refresh token available');
+        const client = new DropboxClient({
+            sdk,
+            appKey: 'test-app-key',
+            logFn,
+            onTokenRefresh: async () => {
+                throw refreshError;
+            },
+        });
+
+        await client.call('/2/files/list_folder', {path: '/pics'}).catch(() => {});
+
+        expect(logFn).toHaveBeenCalledOnce();
+        expect(logFn).toHaveBeenCalledWith('Token refresh failed:', refreshError.message);
     });
 
     test('throws on unknown endpoint', async () => {
