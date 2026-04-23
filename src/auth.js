@@ -1,4 +1,4 @@
-import {readFileSync, writeFileSync, renameSync} from 'fs';
+import {readFileSync, renameSync, writeFileSync} from 'fs';
 import {join} from 'path';
 import {createHash, randomBytes} from 'crypto';
 import {createServer} from 'http';
