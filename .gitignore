@@ -3,5 +3,12 @@ node_modules/
 progress.json
 errors.json
 .tokens.json
+
+# Claudisms
+settings.json
 .worktrees/
 .checkpoints/
+CHECKPOINT.md
+.claude
+.remember
+docs/superpowers
