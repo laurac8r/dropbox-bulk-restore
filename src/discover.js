@@ -4,19 +4,19 @@ export async function discoverDeletedPage(path, apiFn, options = {}) {
   let resultFilterPrefix = filterPrefix || null;
 
   if (cursor) {
-    response = await apiFn('/2/files/list_folder/continue', { cursor });
+    response = await apiFn("/2/files/list_folder/continue", { cursor });
   } else {
     try {
-      response = await apiFn('/2/files/list_folder', {
+      response = await apiFn("/2/files/list_folder", {
         path,
         include_deleted: true,
         recursive: true,
       });
     } catch (err) {
-      if (err.message.includes('path/not_found')) {
-        const parentPath = path.substring(0, path.lastIndexOf('/')) || '/';
+      if (err.message.includes("path/not_found")) {
+        const parentPath = path.substring(0, path.lastIndexOf("/")) || "/";
         resultFilterPrefix = path;
-        response = await apiFn('/2/files/list_folder', {
+        response = await apiFn("/2/files/list_folder", {
           path: parentPath,
           include_deleted: true,
           recursive: true,
@@ -28,11 +28,12 @@ export async function discoverDeletedPage(path, apiFn, options = {}) {
   }
 
   const matchesPath = (entryPath) =>
-    !resultFilterPrefix || entryPath.toLowerCase().startsWith(resultFilterPrefix.toLowerCase() + '/');
+    !resultFilterPrefix ||
+    entryPath.toLowerCase().startsWith(resultFilterPrefix.toLowerCase() + "/");
 
   const deleted = [];
   for (const entry of response.entries) {
-    if (entry['.tag'] === 'deleted' && matchesPath(entry.path_display)) {
+    if (entry[".tag"] === "deleted" && matchesPath(entry.path_display)) {
       deleted.push({ name: entry.name, path: entry.path_display });
     }
   }
@@ -53,16 +54,16 @@ export async function discoverDeleted(path, apiFn, options = {}) {
 
   let response;
   try {
-    response = await apiFn('/2/files/list_folder', {
+    response = await apiFn("/2/files/list_folder", {
       path,
       include_deleted: true,
       recursive: true,
     });
   } catch (err) {
-    if (err.message.includes('path/not_found')) {
-      const parentPath = path.substring(0, path.lastIndexOf('/')) || '/';
+    if (err.message.includes("path/not_found")) {
+      const parentPath = path.substring(0, path.lastIndexOf("/")) || "/";
       filterPrefix = path.toLowerCase();
-      response = await apiFn('/2/files/list_folder', {
+      response = await apiFn("/2/files/list_folder", {
         path: parentPath,
         include_deleted: true,
         recursive: true,
@@ -75,11 +76,11 @@ export async function discoverDeleted(path, apiFn, options = {}) {
   const atLimit = () => limit > 0 && deleted.length >= limit;
 
   const matchesPath = (entryPath) =>
-    !filterPrefix || entryPath.toLowerCase().startsWith(filterPrefix + '/');
+    !filterPrefix || entryPath.toLowerCase().startsWith(filterPrefix + "/");
 
   page++;
   for (const entry of response.entries) {
-    if (entry['.tag'] === 'deleted' && matchesPath(entry.path_display)) {
+    if (entry[".tag"] === "deleted" && matchesPath(entry.path_display)) {
       deleted.push({ name: entry.name, path: entry.path_display });
       if (atLimit()) break;
     }
@@ -87,12 +88,12 @@ export async function discoverDeleted(path, apiFn, options = {}) {
   if (onProgress) onProgress(deleted.length, page);
 
   while (response.has_more && !atLimit()) {
-    response = await apiFn('/2/files/list_folder/continue', {
+    response = await apiFn("/2/files/list_folder/continue", {
       cursor: response.cursor,
     });
     page++;
     for (const entry of response.entries) {
-      if (entry['.tag'] === 'deleted' && matchesPath(entry.path_display)) {
+      if (entry[".tag"] === "deleted" && matchesPath(entry.path_display)) {
         deleted.push({ name: entry.name, path: entry.path_display });
         if (atLimit()) break;
       }

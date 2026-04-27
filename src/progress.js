@@ -1,11 +1,11 @@
-import { join } from 'path';
-import fs from 'fs';
+import { join } from "path";
+import fs from "fs";
 
 export class ProgressTracker {
   constructor(dir, options = {}) {
     this._fs = options.fs || fs;
-    this._progressPath = join(dir, 'progress.json');
-    this._errorsPath = join(dir, 'errors.json');
+    this._progressPath = join(dir, "progress.json");
+    this._errorsPath = join(dir, "errors.json");
     this._completed = new Set();
     this._failedForRetry = [];
 
@@ -14,7 +14,9 @@ export class ProgressTracker {
 
   _load() {
     if (this._fs.existsSync(this._progressPath)) {
-      const data = JSON.parse(this._fs.readFileSync(this._progressPath, 'utf8'));
+      const data = JSON.parse(
+        this._fs.readFileSync(this._progressPath, "utf8"),
+      );
       for (const path of data.completed) {
         this._completed.add(path);
       }
@@ -22,7 +24,7 @@ export class ProgressTracker {
 
     if (this._fs.existsSync(this._errorsPath)) {
       this._failedForRetry = JSON.parse(
-        this._fs.readFileSync(this._errorsPath, 'utf8')
+        this._fs.readFileSync(this._errorsPath, "utf8"),
       );
     }
   }
@@ -51,7 +53,7 @@ export class ProgressTracker {
   _save() {
     this._fs.writeFileSync(
       this._progressPath,
-      JSON.stringify({ completed: [...this._completed] }, null, 2)
+      JSON.stringify({ completed: [...this._completed] }, null, 2),
     );
   }
 }

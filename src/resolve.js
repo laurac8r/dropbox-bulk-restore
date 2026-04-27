@@ -17,14 +17,15 @@ export async function resolveRevisions(deleted, apiFn, options = {}) {
     while (index < deleted.length) {
       const current = deleted[index++];
       try {
-        const response = await apiFn('/2/files/list_revisions', {
+        const response = await apiFn("/2/files/list_revisions", {
           path: current.path,
           limit: 1,
         });
         if (logFn) logFn(current.path, response);
         if (isPastRetention(response.server_deleted)) {
           const daysAgo = Math.floor(
-            (new Date(now || Date.now()) - new Date(response.server_deleted)) / (1000 * 60 * 60 * 24)
+            (new Date(now || Date.now()) - new Date(response.server_deleted)) /
+              (1000 * 60 * 60 * 24),
           );
           errors.push({
             path: current.path,
@@ -38,7 +39,7 @@ export async function resolveRevisions(deleted, apiFn, options = {}) {
           rev: response.entries[0].rev,
         });
       } catch (err) {
-        if (err.message.includes('path/not_file')) {
+        if (err.message.includes("path/not_file")) {
           folders.push({ name: current.name, path: current.path });
         } else {
           errors.push({ path: current.path, error: err.message });

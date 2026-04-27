@@ -1,12 +1,12 @@
-import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { spinnerFrame, Spinner, SPINNER_FRAMES } from '../src/spinner.js';
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { Spinner, SPINNER_FRAMES, spinnerFrame } from "../src/spinner.js";
 
-describe('spinnerFrame', () => {
-  test('returns first frame for 0', () => {
+describe("spinnerFrame", () => {
+  test("returns first frame for 0", () => {
     expect(spinnerFrame(0)).toBe(SPINNER_FRAMES[0]);
   });
 
-  test('cycles through all frames', () => {
+  test("cycles through all frames", () => {
     const frames = [];
     for (let i = 0; i < SPINNER_FRAMES.length; i++) {
       frames.push(spinnerFrame(i));
@@ -14,18 +14,18 @@ describe('spinnerFrame', () => {
     expect(frames).toEqual(SPINNER_FRAMES);
   });
 
-  test('wraps around after last frame', () => {
+  test("wraps around after last frame", () => {
     expect(spinnerFrame(SPINNER_FRAMES.length)).toBe(SPINNER_FRAMES[0]);
     expect(spinnerFrame(SPINNER_FRAMES.length + 1)).toBe(SPINNER_FRAMES[1]);
   });
 
-  test('handles large numbers', () => {
+  test("handles large numbers", () => {
     const frame = spinnerFrame(1000);
     expect(SPINNER_FRAMES).toContain(frame);
   });
 });
 
-describe('Spinner', () => {
+describe("Spinner", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -34,25 +34,25 @@ describe('Spinner', () => {
     vi.useRealTimers();
   });
 
-  test('update() immediately renders the message with a spinner frame', () => {
+  test("update() immediately renders the message with a spinner frame", () => {
     const writes = [];
     const spinner = new Spinner((s) => writes.push(s));
 
-    spinner.update('Loading...');
+    spinner.update("Loading...");
     spinner.stop();
 
     expect(writes).toHaveLength(1);
-    expect(writes[0]).toContain('Loading...');
+    expect(writes[0]).toContain("Loading...");
     expect(writes[0]).toMatch(/^\r/);
     const hasFrame = SPINNER_FRAMES.some((f) => writes[0].includes(f));
     expect(hasFrame).toBe(true);
   });
 
-  test('redraws with next frame every second without new data', () => {
+  test("redraws with next frame every second without new data", () => {
     const writes = [];
     const spinner = new Spinner((s) => writes.push(s));
 
-    spinner.update('Working...');
+    spinner.update("Working...");
     expect(writes).toHaveLength(1);
 
     vi.advanceTimersByTime(250);
@@ -72,23 +72,23 @@ describe('Spinner', () => {
     expect(frames[1]).not.toBe(frames[2]);
   });
 
-  test('update() with new message redraws immediately with new text', () => {
+  test("update() with new message redraws immediately with new text", () => {
     const writes = [];
     const spinner = new Spinner((s) => writes.push(s));
 
-    spinner.update('Page 1...');
-    spinner.update('Page 2...');
+    spinner.update("Page 1...");
+    spinner.update("Page 2...");
     spinner.stop();
 
-    expect(writes[0]).toContain('Page 1...');
-    expect(writes[1]).toContain('Page 2...');
+    expect(writes[0]).toContain("Page 1...");
+    expect(writes[1]).toContain("Page 2...");
   });
 
-  test('stop() prevents further redraws', () => {
+  test("stop() prevents further redraws", () => {
     const writes = [];
     const spinner = new Spinner((s) => writes.push(s));
 
-    spinner.update('Working...');
+    spinner.update("Working...");
     spinner.stop();
     const countAfterStop = writes.length;
 
@@ -96,37 +96,37 @@ describe('Spinner', () => {
     expect(writes).toHaveLength(countAfterStop);
   });
 
-  test('timer redraws the most recent message', () => {
+  test("timer redraws the most recent message", () => {
     const writes = [];
     const spinner = new Spinner((s) => writes.push(s));
 
-    spinner.update('First');
-    spinner.update('Second');
+    spinner.update("First");
+    spinner.update("Second");
 
     vi.advanceTimersByTime(1000);
     spinner.stop();
 
     // The timer redraw (3rd write) should contain "Second", not "First"
-    expect(writes[2]).toContain('Second');
+    expect(writes[2]).toContain("Second");
   });
 
-  test('update() after stop() restarts the timer', () => {
+  test("update() after stop() restarts the timer", () => {
     const writes = [];
     const spinner = new Spinner((s) => writes.push(s));
 
-    spinner.update('Phase 1');
+    spinner.update("Phase 1");
     spinner.stop();
     const countAfterStop = writes.length;
 
     vi.advanceTimersByTime(2000);
     expect(writes).toHaveLength(countAfterStop);
 
-    spinner.update('Phase 2');
+    spinner.update("Phase 2");
     vi.advanceTimersByTime(250);
     spinner.stop();
 
     // Should have: Phase 2 update render + 1 timer redraw
     expect(writes.length).toBe(countAfterStop + 2);
-    expect(writes[writes.length - 1]).toContain('Phase 2');
+    expect(writes[writes.length - 1]).toContain("Phase 2");
   });
 });
